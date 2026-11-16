@@ -28,6 +28,40 @@ Rules: only record what actually happened or what the user decided — no guesse
 
 ---
 
+## Skills (pick by prompt)
+
+Before starting, match the prompt to a row and load that skill with the Skill tool. If a skill isn't installed in your session, follow its intent without it — don't stop to ask. **This file's rules win over any skill's conventions.**
+
+| When the prompt is about… | Load |
+|---|---|
+| A design decision / choosing between options (SoftHSM2 fallback, OCSP in or out, hybrid vs pure ML-DSA) | `engineering:architecture` → write the ADR to `docs/adr/NNNN-<title>.md` and add a line to `DECISIONS.md` |
+| Designing a new service, API contract, or data model | `engineering:system-design` |
+| "How does X work", a walkthrough, "where should this live" | `hzblj-skills:how` |
+| "Why is it like this" / history of a choice | `hzblj-skills:why` |
+| Explaining something to a teammate | `hzblj-skills:teach` |
+| A bug: failing test, pod crash-looping, `psql` / `openssl` error | `engineering:debug` |
+| Reviewing a diff before merge | `engineering:code-review` (security, correctness), then `hzblj-skills:clean-review` (style) |
+| Reviewing a GitHub PR by URL/number | `code-review:code-review` |
+| Refactoring without changing behaviour | `hzblj-skills:refactor` |
+| Tests or a test plan (pytest, `tests/integration`, `tests/ai-eval`, `tests/load`) | `engineering:testing-strategy` |
+| Deploying, rolling out a migration, release prep | `engineering:deploy-checklist` |
+| READMEs, runbooks (key ceremony, SoftHSM2 setup), docs | `engineering:documentation`, then `hzblj-skills:unslop` |
+| Commit messages, PR descriptions, changelogs | `hzblj-skills:unslop` |
+| Something broken in a running environment | `engineering:incident-response` |
+| "What should we clean up" / tech-debt audit | `engineering:tech-debt` |
+| A standup update | `engineering:standup` |
+| A task spanning several services | `hzblj-skills:orchestrate` |
+| Any new code (naming, function size, errors, comments) | `hzblj-skills:meaningful-names`, `functions`, `error-handling`, `comments` |
+| Admin portal (`services/admin-portal`, React/TypeScript) | `hzblj-skills:type-safety`, `component-architecture`, `hooks`, `performance`; `tailwind` only if the portal uses Tailwind |
+| A diagram or chart (C4, metrics, load-test results) | `dataviz` |
+
+Do **not** use, even if installed:
+- `hzblj-skills:project`, `new-feature`, `audit-imports`, `monorepo-architect` — they assume a Turborepo `core-*/feature-*` layout that conflicts with ours (`services/` + `packages/pqca-*`).
+- TypeScript-only conventions (`type-safety`, const arrows, named exports) on Python code.
+- Java/Spring, React Native/Expo, Reanimated, Skia, GSAP and Next.js skills — not in our stack.
+
+---
+
 ## Hard rules (do not break these)
 
 1. **Issuance order is enforced:** OV `accepted` → domain validation passed → signing. Never add a path that signs a cert without both gates.

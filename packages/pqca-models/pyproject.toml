@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pqca-models"
+version = "0.1.0"
+description = "SQLAlchemy ORM models for the PQ-CA schema (database/init/)."
+requires-python = ">=3.11"
+dependencies = ["sqlalchemy>=2.0.30,<2.1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
