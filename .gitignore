@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------
+# Secrets and key material. Never commit these.
+# ---------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.csr
+secrets/
+**/secrets/*.yaml
+!**/secrets/*.example.yaml
+deploy/k8s/overlays/*/secret*.env
+
+# Offline root: only scripts and procedures belong in git
+offline-root/keys/
+offline-root/ceremony-output/
+
+# ---------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ---------------------------------------------------------------------
+# Node (admin portal)
+# ---------------------------------------------------------------------
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------------------------------------------------------------------
+# Local data from containers
+# ---------------------------------------------------------------------
+pgdata/
+chroma-data/
+ollama-models/
+docker-compose.override.yml
+
+# ---------------------------------------------------------------------
+# Test and eval output
+# ---------------------------------------------------------------------
+tests/load/results/
+tests/ai-eval/results/
+*.log
+
+# ---------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
