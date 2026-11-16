@@ -56,7 +56,6 @@ pnpm-debug.log*
 pgdata/
 chroma-data/
 ollama-models/
-docker-compose.override.yml
 
 # ---------------------------------------------------------------------
 # Test and eval output
@@ -64,6 +63,12 @@ docker-compose.override.yml
 tests/load/results/
 tests/ai-eval/results/
 *.log
+
+# ---------------------------------------------------------------------
+# Claude Code: personal settings stay local; shared settings and
+# claude-context/ are committed
+# ---------------------------------------------------------------------
+.claude/settings.local.json
 
 # ---------------------------------------------------------------------
 # Editors and OS

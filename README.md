@@ -15,9 +15,10 @@ pqca/
 ├── images/            Base container images
 ├── infra/             Infrastructure outside the cluster
 ├── offline-root/      Offline root CA material and procedures
-├── ejbca-lab/         EJBCA experiments and comparison work
 ├── tests/             Cross-service test suites
 ├── docs/              Design docs and decisions
+├── claude-context/    Shared Claude Code memory (state, decisions, session logs)
+├── .claude/           Claude Code hooks and shared settings
 └── .github/workflows/ CI pipelines
 ```
 
@@ -88,13 +89,13 @@ When you add a service, add a matching folder under `base/`.
 - `images/oqs-base/`: base image with Open Quantum Safe (liboqs / oqs-provider) built in. Services that do post-quantum crypto build on top of it.
 - `infra/`: anything provisioned outside Kubernetes (cluster setup, networking, cloud resources).
 - `offline-root/`: offline root CA scripts and key ceremony procedures. This never runs in the cluster.
-- `ejbca-lab/`: a sandbox for trying out EJBCA as a reference implementation. Not part of the product.
 - `tests/`
   - `integration/`: tests that run several services together
   - `load/`: load and performance tests
   - `ai-eval/`: evaluation sets for the AI agent and assistants
 - `docs/`: architecture notes, decision records, requirements.
 - `.github/workflows/`: CI.
+- `CLAUDE.md`, `claude-context/`, `.claude/`: instructions and shared memory for Claude Code. See `claude-context/README.md`.
 
 Unit tests live inside each service or package, next to the code they test. `tests/` is only for suites that span services.
 
