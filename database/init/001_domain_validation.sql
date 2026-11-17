@@ -4,6 +4,7 @@
 --
 -- Scope: organizations (minimal), certificate requests + SANs,
 --        domain challenges, per-checker attempts, RA policy.
+--        domain ownership view, ACME placeholders (stretch, FR41).
 -- Source of truth = Postgres (audit). Redis = rate-limit counters only.
 -- =====================================================================
 
@@ -137,6 +138,20 @@ CREATE INDEX ix_chal_ra_queue
     WHERE requires_ra_review AND reviewed_at IS NULL;
 
 -- ---------------------------------------------------------------------
+-- 4b. Domain ownership = a currently valid, RA-cleared challenge.
+--     No separate "domains" table: it would duplicate domain_challenges.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_domain_ownership AS
+SELECT DISTINCT ON (organization_id, domain, is_wildcard)
+       organization_id, domain, is_wildcard, challenge_id, method,
+       validated_at, valid_until
+FROM domain_challenges
+WHERE status = 'valid'
+  AND valid_until > now()
+  AND (NOT requires_ra_review OR ra_decision = 'approved')
+ORDER BY organization_id, domain, is_wildcard, valid_until DESC;
+
+-- ---------------------------------------------------------------------
 -- 5. Request SANs — one row per SAN, each pointing at the challenge
 --    (new or reused) that proves it.
 -- ---------------------------------------------------------------------
@@ -149,6 +164,50 @@ CREATE TABLE request_domains (
 );
 CREATE INDEX ix_reqdom_domain    ON request_domains (domain, is_wildcard);
 CREATE INDEX ix_reqdom_challenge ON request_domains (challenge_id);
+
+-- ---------------------------------------------------------------------
+-- 5b. ACME placeholders (RFC 8555) — stretch goal FR41, empty in the MVP.
+--     An ACME authorization is only a pointer to a domain_challenges row,
+--     so ACME cannot bypass the issuance gates (FR40).
+--     ACME challenge token = domain_challenges.token;
+--     key authorization    = token || '.' || account key thumbprint.
+-- ---------------------------------------------------------------------
+CREATE TABLE acme_accounts (
+    account_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id  UUID NOT NULL REFERENCES organizations(organization_id),
+    key_thumbprint   TEXT NOT NULL UNIQUE,                 -- RFC 7638 JWK thumbprint
+    jwk              JSONB NOT NULL,
+    contact          TEXT[],
+    status           TEXT NOT NULL DEFAULT 'valid'
+                     CHECK (status IN ('valid','deactivated','revoked')),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE acme_orders (
+    order_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id   UUID NOT NULL REFERENCES acme_accounts(account_id),
+    request_id   UUID UNIQUE REFERENCES certificate_requests(request_id),   -- set at finalize
+    identifiers  JSONB NOT NULL,                           -- [{"type":"dns","value":"example.com"}]
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending','ready','processing','valid','invalid')),
+    expires_at   TIMESTAMPTZ NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (expires_at > created_at)
+);
+CREATE INDEX ix_acme_order_account ON acme_orders (account_id, created_at);
+
+CREATE TABLE acme_authorizations (
+    authz_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id      UUID NOT NULL REFERENCES acme_orders(order_id),
+    domain        TEXT NOT NULL CHECK (domain = lower(domain) AND domain !~ '^\*\.'),
+    is_wildcard   BOOLEAN NOT NULL DEFAULT false,
+    challenge_id  UUID REFERENCES domain_challenges(challenge_id),
+    status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','valid','invalid','deactivated','expired','revoked')),
+    expires_at    TIMESTAMPTZ NOT NULL,
+    UNIQUE (order_id, domain, is_wildcard)
+);
+CREATE INDEX ix_acme_authz_challenge ON acme_authorizations (challenge_id);
 
 -- ---------------------------------------------------------------------
 -- 6. Challenge attempts — one row per checker (vantage point) per round

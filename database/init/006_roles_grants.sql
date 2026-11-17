@@ -98,6 +98,8 @@ GRANT INSERT ON revocations TO pqca_gateway;                              -- /re
 GRANT INSERT ON assistant_feedback TO pqca_gateway;
 GRANT EXECUTE ON FUNCTION request_is_validated(UUID) TO pqca_gateway;
 GRANT EXECUTE ON FUNCTION audit_verify_chain() TO pqca_gateway;           -- audit explorer
+GRANT SELECT, INSERT, UPDATE ON acme_accounts, acme_orders, acme_authorizations TO pqca_gateway;   -- ACME (stretch)
+GRANT SELECT ON crl_generation_runs, ocsp_responses, v_crl_health, v_domain_ownership TO pqca_gateway;
 
 -- ---------------------------------------------------------------------
 -- 3. RA service — domain validation and the RA officer queue
@@ -116,6 +118,7 @@ GRANT UPDATE (challenge_id) ON request_domains TO pqca_ra;
 GRANT UPDATE (status, rejection_reason) ON certificate_requests TO pqca_ra;
 GRANT INSERT ON ov_reviews, ov_followup_requests TO pqca_ra;              -- officer decisions (FR26)
 GRANT EXECUTE ON FUNCTION request_is_validated(UUID) TO pqca_ra;
+GRANT SELECT ON v_domain_ownership TO pqca_ra;
 
 -- ---------------------------------------------------------------------
 -- 4. OV agent — reads the case, writes its assessment. Cannot decide.
@@ -142,17 +145,20 @@ GRANT SELECT ON
 GRANT INSERT ON certificates TO pqca_ca_engine;
 GRANT EXECUTE ON FUNCTION reserve_serial(UUID, UUID)    TO pqca_ca_engine;
 GRANT EXECUTE ON FUNCTION request_is_validated(UUID)    TO pqca_ca_engine;
+GRANT SELECT, INSERT, UPDATE ON ocsp_responses TO pqca_ca_engine;       -- engine-brokered OCSP signing (OD-21 default)
 
 -- ---------------------------------------------------------------------
 -- 6. CRL generator
 -- ---------------------------------------------------------------------
 GRANT SELECT ON issuing_cas, crls, v_crl_entries TO pqca_crl;
 GRANT INSERT ON crls TO pqca_crl;
+GRANT SELECT, INSERT, UPDATE ON crl_generation_runs TO pqca_crl;
 
 -- ---------------------------------------------------------------------
 -- 7. OCSP responder — read-only.  LISTEN cert_revoked needs no grant.
 -- ---------------------------------------------------------------------
 GRANT SELECT ON issuing_cas, v_certificate_status TO pqca_ocsp;
+GRANT SELECT ON ocsp_responses TO pqca_ocsp;                             -- still read-only
 
 -- ---------------------------------------------------------------------
 -- 8. Internal copilot — telemetry, feedback, lessons, action log

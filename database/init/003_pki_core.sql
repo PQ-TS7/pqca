@@ -1,5 +1,5 @@
 -- =====================================================================
--- PQ-CA — PKI Core Schema: CAs, serials, certificates, revocations, CRLs
+-- PQ-CA — PKI Core Schema: CAs, serials, certificates, revocations, CRLs, CRL run log, OCSP responses
 -- PostgreSQL 15+   |   database/init/003_pki_core.sql
 -- Requires: 001_domain_validation.sql, 002_organization_validation.sql
 --
@@ -287,6 +287,22 @@ CREATE TRIGGER trg_rev_update_rule BEFORE UPDATE ON revocations
 CREATE TRIGGER trg_rev_no_delete BEFORE DELETE ON revocations
     FOR EACH ROW EXECUTE FUNCTION forbid_modify();
 
+-- NFR-SEC-019: drop the cached OCSP response; reason 1 (keyCompromise)
+-- signals the CRL daemon to rebuild now.  LISTEN emergency_crl; payload =
+-- issuer ca_id.  Delivered at commit, so it follows the revocation itself.
+CREATE OR REPLACE FUNCTION revocation_flush_and_escalate() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM ocsp_responses WHERE serial_number = NEW.serial_number;
+    IF NEW.reason_code = 1 THEN
+        PERFORM pg_notify('emergency_crl',
+            (SELECT issuer_ca_id::text FROM certificates WHERE serial_number = NEW.serial_number));
+    END IF;
+    RETURN NULL;
+END $$;
+
+CREATE TRIGGER trg_rev_flush_ocsp AFTER INSERT ON revocations
+    FOR EACH ROW EXECUTE FUNCTION revocation_flush_and_escalate();
+
 -- ---------------------------------------------------------------------
 -- 5. CRLs — one row per published CRL, numbered per issuer
 -- ---------------------------------------------------------------------
@@ -345,6 +361,85 @@ CREATE TRIGGER trg_crl_after_insert AFTER INSERT ON crls
 CREATE TRIGGER trg_crl_frozen BEFORE UPDATE OR DELETE ON crls
     FOR EACH ROW EXECUTE FUNCTION forbid_modify();
 
+-- ---------------------------------------------------------------------
+-- 5b. CRL generation log — crls holds only successful CRLs; this table
+--     records every attempt, so a failed or stuck build is visible.
+-- ---------------------------------------------------------------------
+CREATE TABLE crl_generation_runs (
+    run_id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    issuer_ca_id   UUID NOT NULL REFERENCES issuing_cas(ca_id),
+    trigger        TEXT NOT NULL CHECK (trigger IN ('scheduled','revocation','emergency','manual')),
+    status         TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','succeeded','failed')),
+    started_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at    TIMESTAMPTZ,
+    entries_count  INT CHECK (entries_count >= 0),
+    crl_id         BIGINT REFERENCES crls(crl_id),
+    error_message  TEXT,
+    CHECK ((status = 'running') = (finished_at IS NULL)),
+    CHECK (status <> 'succeeded' OR crl_id IS NOT NULL),
+    CHECK (status <> 'failed'    OR error_message IS NOT NULL)
+);
+CREATE INDEX ix_crlrun_issuer ON crl_generation_runs (issuer_ca_id, started_at DESC);
+CREATE INDEX ix_crlrun_failed ON crl_generation_runs (started_at) WHERE status = 'failed';
+
+CREATE OR REPLACE FUNCTION crl_run_before_update() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.status <> 'running' THEN
+        RAISE EXCEPTION 'crl run % is finished and cannot change', OLD.run_id;
+    END IF;
+    IF NEW.status <> 'running' THEN
+        NEW.finished_at := coalesce(NEW.finished_at, now());
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_crlrun_cols BEFORE UPDATE ON crl_generation_runs
+    FOR EACH ROW EXECUTE FUNCTION allow_update_only('status','finished_at','entries_count','crl_id','error_message');
+CREATE TRIGGER trg_crlrun_rule BEFORE UPDATE ON crl_generation_runs
+    FOR EACH ROW EXECUTE FUNCTION crl_run_before_update();
+CREATE TRIGGER trg_crlrun_no_delete BEFORE DELETE ON crl_generation_runs
+    FOR EACH ROW EXECUTE FUNCTION forbid_modify();
+
+-- ---------------------------------------------------------------------
+-- 5c. OCSP response store — one latest signed response per certificate.
+--     Needed only for pre-signed responses (OD-21). With engine-brokered
+--     signing and an in-memory cache this table can stay empty.
+--     'unknown' is never stored: an unknown serial has no row here.
+-- ---------------------------------------------------------------------
+CREATE TABLE ocsp_responses (
+    serial_number    cert_serial PRIMARY KEY REFERENCES certificates(serial_number),
+    signer_ca_id     UUID NOT NULL REFERENCES issuing_cas(ca_id),
+    cert_status      TEXT NOT NULL CHECK (cert_status IN ('good','revoked')),
+    revocation_date  TIMESTAMPTZ,
+    reason_code      SMALLINT,
+    this_update      TIMESTAMPTZ NOT NULL,
+    next_update      TIMESTAMPTZ NOT NULL,
+    produced_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    response_der     BYTEA NOT NULL,
+    response_sha256  BYTEA NOT NULL CHECK (octet_length(response_sha256) = 32),
+    CHECK (next_update > this_update),
+    CHECK ((cert_status = 'revoked') = (revocation_date IS NOT NULL)),
+    CHECK (response_sha256 = digest(response_der, 'sha256'))
+);
+CREATE INDEX ix_ocsp_expiry ON ocsp_responses (next_update);
+
+CREATE OR REPLACE FUNCTION ocsp_response_before_write() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE s issuing_cas;
+BEGIN
+    SELECT * INTO s FROM issuing_cas WHERE ca_id = NEW.signer_ca_id;
+    IF NOT FOUND OR s.ca_type <> 'ocsp_signer' OR s.status <> 'active' THEN
+        RAISE EXCEPTION 'signer must be an active OCSP signer';
+    END IF;
+    IF NEW.cert_status = 'good'
+       AND EXISTS (SELECT 1 FROM revocations WHERE serial_number = NEW.serial_number) THEN
+        RAISE EXCEPTION 'certificate % is revoked; cannot store a good response', encode(NEW.serial_number, 'hex');
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_ocsp_before_write BEFORE INSERT OR UPDATE ON ocsp_responses
+    FOR EACH ROW EXECUTE FUNCTION ocsp_response_before_write();
+
 -- =====================================================================
 -- Views for the other services
 -- =====================================================================
@@ -376,6 +471,25 @@ FROM revocations r
 JOIN certificates c USING (serial_number)
 WHERE c.not_after > now();
 
+
+-- CRL health for the dashboard (FR14)
+CREATE OR REPLACE VIEW v_crl_health AS
+SELECT ca.ca_id AS issuer_ca_id,
+       ca.name,
+       l.crl_number,
+       l.this_update,
+       l.next_update,
+       coalesce(l.next_update < now(), true) AS is_overdue,
+       (SELECT count(*) FROM revocations r
+          JOIN certificates c USING (serial_number)
+         WHERE c.issuer_ca_id = ca.ca_id AND r.published_at IS NULL) AS unpublished_revocations,
+       (SELECT count(*) FROM crl_generation_runs g
+         WHERE g.issuer_ca_id = ca.ca_id AND g.status = 'failed'
+           AND g.started_at > now() - interval '24 hours')           AS failed_runs_24h
+FROM issuing_cas ca
+LEFT JOIN LATERAL (SELECT * FROM crls WHERE issuer_ca_id = ca.ca_id
+                    ORDER BY crl_number DESC LIMIT 1) l ON true
+WHERE ca.ca_type <> 'ocsp_signer' AND ca.status <> 'retired';
 -- Internal copilot: "Telemetry summaries (SQL)" from the C4 diagram
 CREATE OR REPLACE VIEW v_telemetry_summary AS
 SELECT
