@@ -1,19 +1,3 @@
-"""Declarative base for every PQ-CA ORM model.
-
-The schema is owned by the SQL in database/init/ and database/migrations/.
-Models describe tables that already exist; never call metadata.create_all()
-or generate migrations from them. Service logins have no CREATE on the
-schema anyway.
-
-Columns filled by the database (gen_random_uuid(), now(), identity, triggers)
-should be declared with server_default=FetchedValue() or similar, not with a
-Python default, so the database stays the source of those values.
-
-A service with INSERT but no SELECT on a table (the support bot on
-assistant_feedback) can't use session.add() or a plain insert(): SQLAlchemy
-fetches the new primary key, and RETURNING needs SELECT. Use
-insert(Model.__table__).inline().values(...) there.
-"""
 
 from __future__ import annotations
 
